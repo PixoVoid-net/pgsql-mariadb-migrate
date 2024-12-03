@@ -65,7 +65,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 1: Create all tables first (without foreign keys)
         foreach ($orderedTables as $index => $tableName) {
             $elapsedTime = microtime(true) - $startTime;
-            ConsoleOutput::showStatus("Creating Tables", "Creating table: $tableName", 1, 5, $elapsedTime);
+            ConsoleOutput::showStatus("Creating Tables", "Creating table", 1, 5, $elapsedTime);
             $columns = fetchTableColumns($pgsql, $tableName);
             createMariaDBTable($mariadb, $tableName, $columns);
         }
@@ -73,7 +73,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 2: Migrate data in batches
         foreach ($orderedTables as $index => $tableName) {
             $elapsedTime = microtime(true) - $startTime;
-            ConsoleOutput::showStatus("Migrating Data", "Migrating data for: $tableName", 2, 5, $elapsedTime);
+            ConsoleOutput::showStatus("Migrating Data", "Migrating data", 2, 5, $elapsedTime);
             $columns = fetchTableColumns($pgsql, $tableName);
             transferTableDataInBatches($pgsql, $mariadb, $tableName, $columns);
         }
@@ -81,7 +81,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 3: Add foreign keys after all data is migrated
         foreach ($orderedTables as $index => $tableName) {
             $elapsedTime = microtime(true) - $startTime;
-            ConsoleOutput::showStatus("Adding Foreign Keys", "Adding foreign keys for: $tableName", 3, 5, $elapsedTime);
+            ConsoleOutput::showStatus("Adding Foreign Keys", "Adding foreign keys", 3, 5, $elapsedTime);
             $foreignKeys = fetchForeignKeys($pgsql, $tableName);
             addForeignKeyConstraints($mariadb, $pgsql, $tableName, $foreignKeys);
         }
@@ -89,7 +89,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 4: Add cascade constraints
         foreach ($orderedTables as $index => $tableName) {
             $elapsedTime = microtime(true) - $startTime;
-            ConsoleOutput::showStatus("Adding Cascade Constraints", "Adding cascade constraints for: $tableName", 4, 5, $elapsedTime);
+            ConsoleOutput::showStatus("Adding Cascade Constraints", "Adding cascade constraints", 4, 5, $elapsedTime);
             $foreignKeys = fetchForeignKeys($pgsql, $tableName);
             addCascadeConstraints($mariadb, $pgsql, $tableName, $foreignKeys);
         }
@@ -97,7 +97,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 5: Add indexes
         foreach ($orderedTables as $index => $tableName) {
             $elapsedTime = microtime(true) - $startTime;
-            ConsoleOutput::showStatus("Creating Indexes", "Creating indexes for: $tableName", 5, 5, $elapsedTime);
+            ConsoleOutput::showStatus("Creating Indexes", "Creating indexes", 5, 5, $elapsedTime);
             createIndexes($pgsql, $mariadb, $tableName);
         }
 
@@ -627,42 +627,40 @@ class ConsoleOutput
         static $lastProgress = -1;
         static $lastErrorCount = -1;
 
-        if ($total <= 0) {
-            $total = 1; // Prevent division by zero
-        }
+        // Prevent division by zero
+        $total = max($total, 1);
 
-        $percentage = (($current / $total) * 100);
-        $percentageDisplay = number_format($percentage, 1); // Show one decimal place
+        // Calculate progress percentage
+        $percentage = ($current / $total) * 100;
+        $percentageDisplay = number_format($percentage, 1);
 
-        // Use createProgressBar to generate the progress bar
-        $progressBar = self::createProgressBar( (int) $percentage);
+        // Generate progress bar
+        $progressBar = self::createProgressBar((int)$percentage);
 
         // Count errors in the log file
-        $errorCount = 0;
-        if (file_exists(LOG_FILE)) {
-            $logContents = file_get_contents(LOG_FILE);
-            $errorCount = substr_count($logContents, '[ERROR]');
-        }
+        $errorCount = file_exists(LOG_FILE) ? substr_count(file_get_contents(LOG_FILE), '[ERROR]') : 0;
 
-        // Only update the console if progress or error count has changed
+        // Update console only if needed
         if ((int)$percentage !== $lastProgress || $errorCount !== $lastErrorCount) {
             // Clear screen and move cursor to top
             echo "\033[2J\033[;H";
             echo "═══════════════════════════════════════════════════════════════════\n";
-            echo "Step: " . self::COLORS['cyan'] . $step . self::COLORS['reset'] . "\n";
-            echo "Progress: [{$progressBar}]" . self::COLORS['reset'] . " {$percentageDisplay}%\n";
-            echo "Current Action: " . self::COLORS['yellow'] . $message . self::COLORS['reset'] . "\n";
-            echo "Errors Logged: " . self::COLORS['red'] . $errorCount . self::COLORS['reset'] . "\n";
+            echo "\033[1m"; // Bold text for emphasis
+            echo sprintf("Step: %s%s%s\n", self::COLORS['cyan'], $step, self::COLORS['reset']);
+            echo sprintf("Progress: [%s%s%s] %s%%\n", self::getGradientColor($percentage), $progressBar, self::COLORS['reset'], $percentageDisplay);
+            echo sprintf("Current Action: %s%-50s%s\n", self::COLORS['yellow'], $message, self::COLORS['reset']);
+            echo sprintf("Errors Logged: %s%d%s\n", self::COLORS['red'], $errorCount, self::COLORS['reset']);
+            echo "\033[0m"; // Reset text formatting
             echo "═══════════════════════════════════════════════════════════════════\n";
 
             $lastProgress = (int)$percentage;
             $lastErrorCount = $errorCount;
         }
 
-        // Additional logging for detailed tracking
+        // Log detailed tracking information
         logMessage(sprintf("Step: %s, Action: %s, Progress: %d/%d (%.1f%%), Errors Logged: %d", $step, $message, $current, $total, $percentageDisplay, $errorCount), 'INFO');
 
-        // Optionally, add a delay for better readability in fast loops
+        // Optional delay for readability in fast loops
         usleep(50000); // Sleep for 50 milliseconds
     }
 
@@ -680,6 +678,18 @@ class ConsoleOutput
             self::COLORS['white'] .
             str_repeat("░", $remaining) .
             self::COLORS['reset'];
+    }
+
+    private static function getGradientColor(float $percentage): string
+    {
+        // Simple gradient from red to green
+        if ($percentage < 50) {
+            return "\033[31m"; // Red
+        } elseif ($percentage < 75) {
+            return "\033[33m"; // Yellow
+        } else {
+            return "\033[32m"; // Green
+        }
     }
 
     public static function showError(string $message): void
