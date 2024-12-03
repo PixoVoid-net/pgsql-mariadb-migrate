@@ -20,6 +20,49 @@ Please read this entire `README.md` carefully before proceeding.
 - Foreign key and index preservation.
 - Progress tracking and detailed logging.
 - Batch processing for optimal performance.
+- Enhanced error handling and logging.
+- Connection pooling and prepared statements for improved performance.
+
+---
+
+## 🛠️ Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/PixoVoid-net/pgsql-mariadb-migrate.git
+   ```
+
+2. **Navigate to the project directory**:
+   ```bash
+   cd pgsql-mariadb-migrate
+   ```
+
+3. **Ensure all required PHP extensions are installed**:
+   - `ext-pdo`
+   - `ext-pdo_pgsql`
+   - `ext-pdo_mysql`
+
+---
+
+## 🔧 Configuration
+
+1. **Copy the example environment file**:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Update the `.env` file** with your database credentials and settings.
+
+---
+
+## 🚀 Usage
+
+1. **Run the migration script**:
+   ```bash
+   php migration.php
+   ```
+
+2. **Monitor the migration process** through the console output and log files.
 
 ---
 
@@ -38,80 +81,15 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ---
 
-## 🧩 Requirements
+## 🤝 Contributing
 
-- PHP >= 8.3
-- Required PHP Extensions:
-  - `ext-pdo`
-  - `ext-pdo_pgsql`
-  - `ext-pdo_mysql`
+Contributions are welcome! Please read the [CONTRIBUTING](CONTRIBUTING.md) file for details on our code of conduct and the process for submitting pull requests.
 
 ---
 
-## 🔧 Prerequisites
+## 📞 Support
 
-- PostgreSQL 9.4+
-- MariaDB 10.3+
-
----
-
-## 📥 Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/PixoVoid-net/pgsql-mariadb-migrate.git
-   cd pgsql-mariadb-migrate
-   ```
-
-2. Create a `.env` file in the project root directory and configure it with your database credentials:
-   ```env
-   PGSQL_HOST=localhost
-   PGSQL_PORT=5432
-   PGSQL_DBNAME=your_database
-   PGSQL_USER=your_username
-   PGSQL_PASSWORD=your_password
-
-   MARIADB_HOST=localhost
-   MARIADB_PORT=3306
-   MARIADB_DBNAME=your_database
-   MARIADB_USER=your_username
-   MARIADB_PASSWORD=your_password
-   ```
-
----
-
-## ⚙️ Configuration
-
-### Database Settings
-
-The tool uses environment variables to manage database connections. All configurations are stored in the `.env` file.
-
-### Migration Constants
-
-Key configuration constants in the `DatabaseConfig` class:
-- `BATCH_SIZE`: The number of records to process per batch (default: 100).
-- `DEFAULT_ENGINE`: Default storage engine for tables (default: InnoDB).
-- `CHARSET`: Default character set (default: utf8mb4).
-- `COLLATION`: Default collation (default: utf8mb4_unicode_ci).
-
----
-
-## 🏁 Usage
-
-1. Ensure your `.env` file is configured correctly.
-2. Run the migration script:
-   ```bash
-   php migration.php
-   ```
-
-The tool will:
-1. Verify the required PHP extensions.
-2. Connect to both PostgreSQL and MariaDB databases.
-3. Create tables in the correct dependency order.
-4. Migrate data with proper type conversion.
-5. Establish foreign key constraints.
-6. Add indexes.
-7. Set up audit triggers.
+For support, please contact [contact@pixovoid.net](mailto:contact@pixovoid.net) or open an issue on GitHub.
 
 ---
 

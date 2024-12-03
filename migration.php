@@ -55,6 +55,7 @@ function createPDOConnection(string $host, string $port, string $dbname, string 
 // Group all migration-related functions
 function migrateDatabase(PDO $pgsql, PDO $mariadb): void
 {
+    profileStart('migrateDatabase');
     try {
         ConsoleOutput::showStatus("Analyzing Database", "Getting table dependencies...", 0, 5);
         $orderedTables = getTableOrder($pgsql);
@@ -105,10 +106,12 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         logMessage("Error during migration: " . $e->getMessage(), 'ERROR');
         throw $e;
     }
+    profileEnd('migrateDatabase');
 }
 
 function transferTableDataInBatches(PDO $pgsql, PDO $mariadb, string $tableName, array $columns, int $batchSize = 1000): void
 {
+    $batchSize = DatabaseConfig::BATCH_SIZE;
     $offset = 0;
     do {
         $query = "SELECT * FROM $tableName LIMIT $batchSize OFFSET $offset";
@@ -126,6 +129,7 @@ function transferTableDataInBatches(PDO $pgsql, PDO $mariadb, string $tableName,
 
         $offset += $batchSize;
     } while (count($rows) > 0);
+    $stmt = null; // Close the statement
 }
 
 function insertRowIntoMariaDB(PDO $mariadb, string $tableName, array $row): void
@@ -135,6 +139,7 @@ function insertRowIntoMariaDB(PDO $mariadb, string $tableName, array $row): void
     $query = "INSERT INTO $tableName ($columns) VALUES ($placeholders)";
     $stmt = $mariadb->prepare($query);
     $stmt->execute(array_values($row));
+    $stmt = null; // Close the statement
 }
 
 function logMessage(string $message, string $level = 'INFO')
@@ -174,6 +179,10 @@ function loadEnv(string $filePath): void
 
 function fetchTableColumns(PDO $pdo, string $tableName): array
 {
+    static $cache = [];
+    if (isset($cache[$tableName])) {
+        return $cache[$tableName];
+    }
     $stmt = $pdo->prepare(
         'SELECT column_name, data_type, is_nullable, column_default, ordinal_position, 
         CASE 
@@ -184,8 +193,9 @@ function fetchTableColumns(PDO $pdo, string $tableName): array
          WHERE table_name = :table_name'
     );
     $stmt->execute(['table_name' => $tableName]);
-
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $cache[$tableName] = $result;
+    return $result;
 }
 
 function createMariaDBTable(PDO $mariadb, string $tableName, array $columns, string $tableEngine = DatabaseConfig::DEFAULT_ENGINE): void
@@ -680,6 +690,7 @@ const COLORS = [
     'green' => "\033[32m",
     'yellow' => "\033[33m",
     'cyan' => "\033[36m",
+    'white' => "\033[37m",
 ];
 
 function colorize(string $message, string $color): string
@@ -701,6 +712,16 @@ function displayWarning(): void
     if (strtoupper($confirmation) !== 'YES') {
         exit("Operation cancelled by user.\n");
     }
+}
+
+function profileStart(string $section): void
+{
+    logMessage("Profiling start: $section", 'DEBUG');
+}
+
+function profileEnd(string $section): void
+{
+    logMessage("Profiling end: $section", 'DEBUG');
 }
 
 function main()
