@@ -23,7 +23,23 @@ The author **assumes no liability for any damages or data loss** caused by the u
 - Automatically converts data types from PostgreSQL to MariaDB.
 - Uses batch processing to improve performance during data transfer.
 - Supports configurable table engines (e.g., InnoDB).
-- Logs progress and errors to a migration log file (`migration_log.txt`).
+- Logs progress and errors to a migration log file (`migration.log`).
+
+## Data Type Mapping
+
+The script converts PostgreSQL data types to MariaDB data types using the following mapping:
+
+| PostgreSQL Type                     | MariaDB Type       |
+|-------------------------------------|--------------------|
+| `smallint`                          | `INT`              |
+| `integer`                           | `INT`              |
+| `bigint`                            | `BIGINT`           |
+| `boolean`                           | `TINYINT(1)`       |
+| `character varying`                 | `VARCHAR(255)`     |
+| `text`                              | `TEXT`             |
+| `timestamp without time zone`       | `DATETIME`         |
+| `date`                              | `DATE`             |
+| `numeric`                           | `DECIMAL(20,6)`    |
 
 ## 🔧 Installation & Setup
 
@@ -78,4 +94,3 @@ The author **assumes no liability for any damages or data loss** caused by the u
 ## 📜 License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
-
