@@ -1,0 +1,4 @@
+*.log
+*.sql
+*.sql.gz
+.env
