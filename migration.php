@@ -90,7 +90,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         foreach ($orderedTables as $index => $tableName) {
             ConsoleOutput::showStatus("Adding Cascade Constraints", "Adding cascade constraints for: $tableName", 4, 5);
             $foreignKeys = fetchForeignKeys($pgsql, $tableName);
-            addCascadeConstraints($mariadb, $tableName, $foreignKeys);
+            addCascadeConstraints($mariadb, $pgsql, $tableName, $foreignKeys);
         }
 
         // Step 5: Add indexes
@@ -320,7 +320,7 @@ function createForeignKeyConstraints(PDO $pgsql, PDO $mariadb, string $tableName
             $mariadb->exec($constraint);
             logMessage("Added foreign key constraint {$fk['constraint_name']} to $tableName", 'INFO');
         } catch (PDOException $e) {
-            logMessage("Failed to add foreign key constraint: " . $e->getMessage(), 'ERROR');
+            logMessage("Error creating table `$tableName`: " . $e->getMessage(), 'ERROR');
         }
     }
 }
@@ -360,71 +360,166 @@ function createIndexes(PDO $pgsql, PDO $mariadb, string $tableName): void
     }
 }
 
-function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
+function addCascadeConstraints(PDO $mariadb, PDO $pgsql, string $tableName, array $foreignKeys): void
 {
-    foreach ($foreignKeys as $foreignKey) {
-        // Ensure unique constraint name by appending table name
-        $constraintName = "fk_{$tableName}_{$foreignKey['name']}";
+    // Check if the table exists in PostgreSQL
+    $tableExistsSql = "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = :tableName";
+    $stmt = $pgsql->prepare($tableExistsSql);
+    $stmt->execute(['tableName' => $tableName]);
 
-        $constraintSql = <<<SQL
+    if ($stmt->rowCount() === 0) {
+        logMessage("Table '$tableName' does not exist in PostgreSQL.", 'ERROR');
+        return;
+    }
+
+    foreach ($foreignKeys as $foreignKey) {
+        // Ensure unique constraint name by appending table name and column
+        $constraintName = "fk_{$tableName}_{$foreignKey['column']}";
+
+        // Default values for ON UPDATE and ON DELETE
+        $onUpdate = '';
+        $onDelete = '';
+
+        // Check if ON UPDATE CASCADE is defined in PostgreSQL
+        $pgsqlUpdateCheckSql = "
+            SELECT 1 
+            FROM information_schema.referential_constraints rc 
+            JOIN information_schema.key_column_usage kcu 
+              ON rc.constraint_name = kcu.constraint_name 
+             AND rc.constraint_schema = kcu.constraint_schema 
+            WHERE rc.constraint_schema = 'public' 
+              AND rc.update_rule = 'CASCADE' 
+              AND kcu.table_name = :tableName 
+              AND kcu.column_name = :columnName
+        ";
+        $stmt = $pgsql->prepare($pgsqlUpdateCheckSql);
+        $stmt->execute(['tableName' => $tableName, 'columnName' => $foreignKey['column']]);
+
+        if ($stmt->rowCount() > 0) {
+            $onUpdate = 'ON UPDATE CASCADE';
+        }
+
+        // Check if ON DELETE CASCADE is defined in PostgreSQL
+        $pgsqlDeleteCheckSql = "
+            SELECT 1 
+            FROM information_schema.referential_constraints rc 
+            JOIN information_schema.key_column_usage kcu 
+              ON rc.constraint_name = kcu.constraint_name 
+             AND rc.constraint_schema = kcu.constraint_schema 
+            WHERE rc.constraint_schema = 'public' 
+              AND rc.delete_rule = 'CASCADE' 
+              AND kcu.table_name = :tableName 
+              AND kcu.column_name = :columnName
+        ";
+        $stmt = $pgsql->prepare($pgsqlDeleteCheckSql);
+        $stmt->execute(['tableName' => $tableName, 'columnName' => $foreignKey['column']]);
+
+        if ($stmt->rowCount() > 0) {
+            $onDelete = 'ON DELETE CASCADE';
+        }
+
+        // Construct the ALTER TABLE SQL statement dynamically
+        $constraintSql = "
             ALTER TABLE `$tableName`
             ADD CONSTRAINT `$constraintName`
             FOREIGN KEY (`{$foreignKey['column']}`)
             REFERENCES `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)
-            ON UPDATE CASCADE
-            ON DELETE CASCADE;
-        SQL;
+            $onUpdate
+            $onDelete;
+        ";
 
         try {
-            // Check if the referenced table and column exist
-            $checkSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$foreignKey['referenced_table']}' AND COLUMN_NAME = '{$foreignKey['referenced_column']}'";
-            $result = $mariadb->query($checkSql);
-            if ($result->rowCount() > 0) {
+            // Verify if the referenced table and column exist in MariaDB
+            $checkSql = "
+                SELECT 1 
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME = :referencedTable 
+                  AND COLUMN_NAME = :referencedColumn
+            ";
+            $stmt = $mariadb->prepare($checkSql);
+            $stmt->execute([
+                'referencedTable' => $foreignKey['referenced_table'],
+                'referencedColumn' => $foreignKey['referenced_column']
+            ]);
+
+            if ($stmt->rowCount() > 0) {
+                // Ensure the referenced column has an index
+                $indexCheckSql = "SHOW INDEX FROM `{$foreignKey['referenced_table']}` WHERE Column_name = :referenced_column";
+                $indexStmt = $mariadb->prepare($indexCheckSql);
+                $indexStmt->execute([
+                    ':referenced_column' => $foreignKey['referenced_column']
+                ]);
+
+                if ($indexStmt->rowCount() === 0) {
+                    $createIndexSql = "CREATE INDEX idx_{$foreignKey['referenced_column']} ON `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)";
+                    $mariadb->exec($createIndexSql);
+                }
+
+                // Add the foreign key constraint
                 $mariadb->exec($constraintSql);
-                logMessage("Added cascade constraints for $tableName", 'INFO');
+                logMessage("Added cascade constraints for table '$tableName', column '{$foreignKey['column']}'", 'INFO');
             } else {
-                logMessage("Referenced table or column does not exist for $tableName", 'ERROR');
+                logMessage("Referenced table or column does not exist for '$tableName' and column '{$foreignKey['column']}'", 'ERROR');
             }
         } catch (PDOException $e) {
-            logMessage("Failed to add cascade constraints for $tableName: " . $e->getMessage(), 'ERROR');
+            logMessage("Failed to add cascade constraints for table '$tableName', column '{$foreignKey['column']}': " . $e->getMessage(), 'ERROR');
         }
     }
 }
 
 function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
+    // Define all possible actions for ON DELETE and ON UPDATE
+    $validActions = ['NO ACTION', 'CASCADE', 'SET NULL', 'RESTRICT', 'SET DEFAULT'];
+
     foreach ($foreignKeys as $foreignKey) {
         // Set default actions if not specified
         $onUpdate = strtoupper($foreignKey['on_update'] ?? 'NO ACTION');
         $onDelete = strtoupper($foreignKey['on_delete'] ?? 'NO ACTION');
 
         // Validate actions
-        $validActions = ['NO ACTION', 'CASCADE', 'SET NULL', 'RESTRICT'];
-        $onUpdate = in_array($onUpdate, $validActions) ? $onUpdate : 'NO ACTION';
-        $onDelete = in_array($onDelete, $validActions) ? $onDelete : 'NO ACTION';
+        if (!in_array($onUpdate, $validActions)) {
+            logMessage("Invalid ON UPDATE action '{$onUpdate}' for {$foreignKey['name']} in $tableName. Defaulting to 'NO ACTION'.", 'WARNING');
+            $onUpdate = 'NO ACTION';
+        }
+        if (!in_array($onDelete, $validActions)) {
+            logMessage("Invalid ON DELETE action '{$onDelete}' for {$foreignKey['name']} in $tableName. Defaulting to 'NO ACTION'.", 'WARNING');
+            $onDelete = 'NO ACTION';
+        }
 
-        $constraintSql = <<<SQL
-            ALTER TABLE `$tableName`
-            ADD CONSTRAINT `{$foreignKey['name']}`
-            FOREIGN KEY (`{$foreignKey['column']}`)
-            REFERENCES `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)
-            ON UPDATE $onUpdate
-            ON DELETE $onDelete;
-        SQL;
+        // Build the SQL for adding the foreign key constraint
+        $constraintSql = "ALTER TABLE `$tableName` ADD CONSTRAINT `{$foreignKey['name']}` FOREIGN KEY (`{$foreignKey['column']}`) REFERENCES `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)";
+
+        if ($onUpdate !== 'NO ACTION') {
+            $constraintSql .= " ON UPDATE $onUpdate";
+        }
+        if ($onDelete !== 'NO ACTION') {
+            $constraintSql .= " ON DELETE $onDelete";
+        }
 
         try {
             // Check if the referenced table and column exist
-            $checkSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$foreignKey['referenced_table']}' AND COLUMN_NAME = '{$foreignKey['referenced_column']}'";
-            $result = $mariadb->query($checkSql);
-            if ($result->rowCount() > 0) {
+            $checkSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :referenced_table AND COLUMN_NAME = :referenced_column";
+            $stmt = $mariadb->prepare($checkSql);
+            $stmt->execute([
+                ':referenced_table' => $foreignKey['referenced_table'],
+                ':referenced_column' => $foreignKey['referenced_column']
+            ]);
+
+            if ($stmt->rowCount() > 0) {
                 // Ensure the referenced column has an index
-                $indexCheckSql = "SHOW INDEX FROM `{$foreignKey['referenced_table']}` WHERE Column_name = '{$foreignKey['referenced_column']}'";
-                $indexResult = $mariadb->query($indexCheckSql);
-                if ($indexResult->rowCount() === 0) {
+                $indexCheckSql = "SHOW INDEX FROM `{$foreignKey['referenced_table']}` WHERE Column_name = :referenced_column";
+                $indexStmt = $mariadb->prepare($indexCheckSql);
+                $indexStmt->execute([
+                    ':referenced_column' => $foreignKey['referenced_column']
+                ]);
+
+                if ($indexStmt->rowCount() === 0) {
                     $createIndexSql = "CREATE INDEX idx_{$foreignKey['referenced_column']} ON `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)";
                     $mariadb->exec($createIndexSql);
                 }
 
+                // Add the foreign key constraint
                 $mariadb->exec($constraintSql);
                 logMessage("Added foreign key constraint for $tableName: {$foreignKey['name']}", 'INFO');
             } else {
