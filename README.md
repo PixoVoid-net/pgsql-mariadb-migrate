@@ -145,9 +145,3 @@ The tool will:
   - 🟢 **Success** messages
   - 🔴 **Error** messages
   - 🟡 **Warning** messages
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
