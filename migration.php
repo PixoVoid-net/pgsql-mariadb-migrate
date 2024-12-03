@@ -35,7 +35,7 @@ ini_set('error_log', __DIR__ . '/migration.log'); // Log errors to the migration
 // Enhanced script execution time management
 set_time_limit(0); // Limit execution time to unlimited to prevent server overload
 
-define('LOG_FILE', __DIR__ . '/migration.log');
+define('LOG_FILE', __DIR__ . '/migration' . date('Y-m-d-H-i') . '.log');
 
 // Group all database connection functions
 function createPDOConnection(string $host, string $port, string $dbname, string $user, string $password, string $engine = 'pgsql'): PDO
@@ -44,10 +44,11 @@ function createPDOConnection(string $host, string $port, string $dbname, string 
     try {
         $pdo = new PDO($dsn, $user, $password);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        logMessage("Successfully connected to the database: $dbname", 'INFO');
         return $pdo;
     } catch (PDOException $e) {
         logMessage("Connection failed: " . $e->getMessage(), 'ERROR');
-        exit("Database connection error. Check the log for details.");
+        throw new RuntimeException("Database connection error. Please check the configuration and try again.");
     }
 }
 
@@ -822,8 +823,11 @@ function displayWarning(): void
     echo colorize("PLEASE READ THE README.MD FILE BEFORE RUNNING THIS SCRIPT.\n", 'yellow');
     echo colorize("Ensure all necessary backups are taken before proceeding.\n", 'yellow');
     echo colorize("######################################################################\n", 'red');
-    echo colorize("Press [Enter] to proceed or Ctrl+C to exit.\n", 'cyan');
-    fgets(STDIN);
+    echo colorize("Type 'YES' to confirm you have read and understood the warning: ", 'cyan');
+    $confirmation = trim(fgets(STDIN));
+    if (strtoupper($confirmation) !== 'YES') {
+        exit("Operation cancelled by user.\n");
+    }
 }
 
 function main()
