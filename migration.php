@@ -315,12 +315,16 @@ function createForeignKeyConstraints(PDO $pgsql, PDO $mariadb, string $tableName
             tc.constraint_name,
             kcu.column_name,
             ccu.table_name AS foreign_table_name,
-            ccu.column_name AS foreign_column_name
+            ccu.column_name AS foreign_column_name,
+            rc.update_rule,
+            rc.delete_rule
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
             ON tc.constraint_name = kcu.constraint_name
         JOIN information_schema.constraint_column_usage ccu
             ON ccu.constraint_name = tc.constraint_name
+        JOIN information_schema.referential_constraints rc
+            ON rc.constraint_name = tc.constraint_name
         WHERE tc.constraint_type = 'FOREIGN KEY'
         AND tc.table_name = :tableName
     SQL;
@@ -335,8 +339,8 @@ function createForeignKeyConstraints(PDO $pgsql, PDO $mariadb, string $tableName
             ADD CONSTRAINT `{$fk['constraint_name']}` 
             FOREIGN KEY (`{$fk['column_name']}`) 
             REFERENCES `{$fk['foreign_table_name']}` (`{$fk['foreign_column_name']}`)
-            ON DELETE CASCADE 
-            ON UPDATE CASCADE
+            ON DELETE {$fk['delete_rule']} 
+            ON UPDATE {$fk['update_rule']}
         SQL;
 
         try {
@@ -505,8 +509,18 @@ function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKe
 function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
     foreach ($foreignKeys as $foreignKey) {
-        $onUpdate = $foreignKey['on_update'] ?? 'NO ACTION';
-        $onDelete = $foreignKey['on_delete'] ?? 'NO ACTION';
+        // Default actions if not specified
+        $onUpdate = strtoupper($foreignKey['on_update'] ?? 'NO ACTION');
+        $onDelete = strtoupper($foreignKey['on_delete'] ?? 'NO ACTION');
+
+        // Validate actions
+        $validActions = ['NO ACTION', 'CASCADE', 'SET NULL', 'RESTRICT'];
+        if (!in_array($onUpdate, $validActions)) {
+            $onUpdate = 'NO ACTION';
+        }
+        if (!in_array($onDelete, $validActions)) {
+            $onDelete = 'NO ACTION';
+        }
 
         $constraintSql = <<<SQL
             ALTER TABLE `$tableName`
@@ -806,6 +820,7 @@ function displayWarning(): void
     echo colorize("The author disclaims any liability for damages caused by its use.\n", 'yellow');
     echo colorize("This script migrates data from PostgreSQL to MariaDB.\n", 'yellow');
     echo colorize("PLEASE READ THE README.MD FILE BEFORE RUNNING THIS SCRIPT.\n", 'yellow');
+    echo colorize("Ensure all necessary backups are taken before proceeding.\n", 'yellow');
     echo colorize("######################################################################\n", 'red');
     echo colorize("Press [Enter] to proceed or Ctrl+C to exit.\n", 'cyan');
     fgets(STDIN);
@@ -813,13 +828,11 @@ function displayWarning(): void
 
 function main()
 {
-    logMessage("Migration started.");
+    logMessage("Migration started.", 'INFO');
+    displayWarning();
     try {
         // Load environment variables
         loadEnv(__DIR__ . '/.env');
-
-        // Display warning and get user confirmation
-        displayWarning();
 
         // Create database connections using individual environment variables
         $pgsql = createPDOConnection(getenv('PGSQL_HOST'), getenv('PGSQL_PORT'), getenv('PGSQL_DBNAME'), getenv('PGSQL_USER'), getenv('PGSQL_PASSWORD'), 'pgsql');
