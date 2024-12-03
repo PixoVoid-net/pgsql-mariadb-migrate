@@ -325,15 +325,27 @@ function createForeignKeyConstraints(PDO $pgsql, PDO $mariadb, string $tableName
             ADD CONSTRAINT `{$fk['constraint_name']}` 
             FOREIGN KEY (`{$fk['column_name']}`) 
             REFERENCES `{$fk['foreign_table_name']}` (`{$fk['foreign_column_name']}`)
-            ON DELETE {$fk['delete_rule']} 
-            ON UPDATE {$fk['update_rule']}
         SQL;
+
+        // Add ON DELETE rule if specified
+        if (!empty($fk['delete_rule'])) {
+            $constraint .= " ON DELETE " . strtoupper($fk['delete_rule']);
+        }
+
+        // Add ON UPDATE rule if specified
+        if (!empty($fk['update_rule'])) {
+            $constraint .= " ON UPDATE " . strtoupper($fk['update_rule']);
+        }
 
         try {
             $mariadb->exec($constraint);
             logMessage("Added foreign key constraint {$fk['constraint_name']} to $tableName", 'INFO');
         } catch (PDOException $e) {
-            logMessage("Error creating table `$tableName`: " . $e->getMessage(), 'ERROR');
+            if (strpos($e->getMessage(), 'foreign key constraint') !== false) {
+                logMessage("Foreign key constraint issue for `$tableName`: " . $e->getMessage(), 'WARNING');
+            } else {
+                logMessage("Error creating table `$tableName`: " . $e->getMessage(), 'ERROR');
+            }
         }
     }
 }
