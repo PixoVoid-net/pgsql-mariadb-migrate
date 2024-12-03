@@ -8,7 +8,7 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 set_time_limit(0);
 
-define('LOG_FILE', __DIR__ . '/migration_log.txt'); // Logdatei
+define('LOG_FILE', __DIR__ . '/migration.log'); // Logdatei
 
 echo "######################### WARNING ################################\n";
 echo "Use this script at your own risk.\n"; 
