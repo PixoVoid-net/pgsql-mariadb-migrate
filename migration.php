@@ -16,7 +16,6 @@
  * @author      PixoVoid <contact@pixovoid.net>
  * @copyright   2024 PixoVoid
  * @license     MIT License
- * @version     1.0.0
  * @link        https://pixovoid.net
  * @link        https://github.com/PixoVoid-net/pgsql-mariadb-migrate
  *
@@ -74,7 +73,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
             createMariaDBTable($mariadb, $tableName, $columns);
         }
 
-        // Step 2: Migrate data in correct order
+        // Step 2: Migrate data in batches
         ConsoleOutput::showStatus("Migrating Data", "Preparing to migrate data...", 2, 5);
         foreach ($orderedTables as $index => $tableName) {
             ConsoleOutput::showStatus(
@@ -84,7 +83,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
                 5
             );
             $columns = fetchTableColumns($pgsql, $tableName);
-            transferTableData($pgsql, $mariadb, $tableName, $columns);
+            transferTableDataInBatches($pgsql, $mariadb, $tableName, $columns);
         }
 
         // Step 3: Add foreign keys after all data is migrated
@@ -96,16 +95,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
                 3,
                 5
             );
-            $foreignKeys = [
-                [
-                    'name' => 'fk_example',
-                    'column' => 'example_id',
-                    'referenced_table' => 'example_table',
-                    'referenced_column' => 'id',
-                    'on_update' => 'CASCADE',
-                    'on_delete' => 'SET NULL',
-                ],
-            ];
+            $foreignKeys = fetchForeignKeys($pgsql, $tableName);
             addForeignKeyConstraints($mariadb, $tableName, $foreignKeys);
         }
 
@@ -118,15 +108,8 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
                 4,
                 5
             );
-            $foreignKeys = [
-                [
-                    'name' => 'fk_example',
-                    'column' => 'example_id',
-                    'referenced_table' => 'example_table',
-                    'referenced_column' => 'id',
-                ],
-            ];
-            addCascadeConstraints($mariadb, $tableName, $foreignKeys);
+            $cascadeConstraints = fetchCascadeConstraints($pgsql, $tableName);
+            addCascadeConstraints($mariadb, $tableName, $cascadeConstraints);
         }
 
         // Step 5: Add indexes
@@ -161,49 +144,36 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
     }
 }
 
-function transferTableData(PDO $pgsql, PDO $mariadb, string $tableName, array $columns): void
+function transferTableDataInBatches(PDO $pgsql, PDO $mariadb, string $tableName, array $columns, int $batchSize = 1000): void
 {
-    $columnNames = array_column($columns, 'column_name');
-    $columnPlaceholders = implode(',', array_fill(0, count($columnNames), '?'));
-    $columnsSql = implode('`,`', $columnNames); // MariaDB format with backticks
+    $offset = 0;
+    do {
+        $query = "SELECT * FROM $tableName LIMIT $batchSize OFFSET $offset";
+        $stmt = $pgsql->query($query);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Für PostgreSQL benötigen wir doppelte Anführungszeichen für Spaltennamen
-    $pgsqlColumnsSql = implode('","', $columnNames); // PostgreSQL format with double quotes
-
-    $selectStmt = $pgsql->prepare("SELECT \"$pgsqlColumnsSql\" FROM \"$tableName\"");
-
-    $selectStmt->execute();
-
-    $batch = [];
-    while ($row = $selectStmt->fetch(PDO::FETCH_ASSOC)) {
-        sanitizeRow($row, $columns);
-        $batch[] = array_values($row);
-
-        if (count($batch) >= DatabaseConfig::BATCH_SIZE) {
-            $insertStmt = $mariadb->prepare(
-                "INSERT INTO `$tableName` (`$columnsSql`) VALUES ($columnPlaceholders)"
-            );
-            foreach ($batch as $data) {
-                $insertStmt->execute($data);
+        if (count($rows) > 0) {
+            $mariadb->beginTransaction();
+            foreach ($rows as $row) {
+                sanitizeRow($row, $columns);
+                insertRowIntoMariaDB($mariadb, $tableName, $row);
             }
-            $batch = []; // Reset batch
+            $mariadb->commit();
         }
-    }
 
-    // Insert remaining rows if any
-    if ($batch) {
-        $insertStmt = $mariadb->prepare(
-            "INSERT INTO `$tableName` (`$columnsSql`) VALUES ($columnPlaceholders)"
-        );
-        foreach ($batch as $data) {
-            $insertStmt->execute($data);
-        }
-    }
-
-    logMessage("Data transferred for table `$tableName`.", 'INFO');
+        $offset += $batchSize;
+    } while (count($rows) > 0);
 }
 
-// Group all utility functions
+function insertRowIntoMariaDB(PDO $mariadb, string $tableName, array $row): void
+{
+    $columns = implode(", ", array_keys($row));
+    $placeholders = implode(", ", array_fill(0, count($row), '?'));
+    $query = "INSERT INTO $tableName ($columns) VALUES ($placeholders)";
+    $stmt = $mariadb->prepare($query);
+    $stmt->execute(array_values($row));
+}
+
 function logMessage(string $message, string $level = 'INFO')
 {
     $timestamp = date('Y-m-d H:i:s');
@@ -239,7 +209,6 @@ function loadEnv(string $filePath): void
     }
 }
 
-// Group all database schema functions
 function fetchTableColumns(PDO $pdo, string $tableName): array
 {
     $stmt = $pdo->prepare(
@@ -309,7 +278,6 @@ function createMariaDBTable(PDO $mariadb, string $tableName, array $columns, str
     }
 }
 
-// Group all data sanitization functions
 function sanitizeRow(array &$row, array $columns): void
 {
     foreach ($columns as $col) {
@@ -340,7 +308,6 @@ function sanitizeRow(array &$row, array $columns): void
     }
 }
 
-// Group all foreign key and index functions
 function createForeignKeyConstraints(PDO $pgsql, PDO $mariadb, string $tableName): void
 {
     $query = <<<SQL
@@ -416,7 +383,6 @@ function createIndexes(PDO $pgsql, PDO $mariadb, string $tableName): void
     }
 }
 
-// Group all trigger functions
 function createTriggers(PDO $mariadb, string $tableName): void
 {
     // Create audit table if it doesn't exist
@@ -515,7 +481,6 @@ function createTriggers(PDO $mariadb, string $tableName): void
     }
 }
 
-// Group all cascade constraint functions
 function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
     foreach ($foreignKeys as $foreignKey) {
@@ -537,7 +502,6 @@ function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKe
     }
 }
 
-// Group all foreign key constraint functions
 function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
     foreach ($foreignKeys as $foreignKey) {
@@ -562,7 +526,6 @@ function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreig
     }
 }
 
-// Group all table dependency functions
 function getTableOrder(PDO $pgsql): array
 {
     $tables = [];
@@ -630,7 +593,6 @@ function getTableOrder(PDO $pgsql): array
     return $orderedTables;
 }
 
-// Group all audit table functions
 function dropAuditTables(PDO $mariadb, array $tableNames): void
 {
     foreach ($tableNames as $tableName) {
@@ -644,7 +606,6 @@ function dropAuditTables(PDO $mariadb, array $tableNames): void
     }
 }
 
-// Group all console output functions
 class ConsoleOutput
 {
     public const COLORS = [
@@ -715,7 +676,6 @@ class ConsoleOutput
     }
 }
 
-// Group all data type functions
 enum DataType: string
 {
     case SMALLINT = 'SMALLINT';
@@ -744,7 +704,6 @@ enum DataType: string
     }
 }
 
-// Group all database configuration functions
 readonly class DatabaseConfig
 {
     public const BATCH_SIZE = 100;
@@ -753,7 +712,80 @@ readonly class DatabaseConfig
     public const COLLATION = 'utf8mb4_unicode_ci';
 }
 
-// Main execution function.
+function fetchForeignKeys(PDO $pgsql, string $tableName): array
+{
+    $query = <<<SQL
+        SELECT
+            tc.constraint_name,
+            kcu.column_name,
+            ccu.table_name AS foreign_table_name,
+            ccu.column_name AS foreign_column_name,
+            tc.constraint_type,
+            tc.table_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+        JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_name = :tableName
+    SQL;
+
+    $stmt = $pgsql->prepare($query);
+    $stmt->execute(['tableName' => $tableName]);
+    $foreignKeys = $stmt->fetchAll();
+
+    $result = [];
+    foreach ($foreignKeys as $fk) {
+        $result[] = [
+            'name' => $fk['constraint_name'],
+            'column' => $fk['column_name'],
+            'referenced_table' => $fk['foreign_table_name'],
+            'referenced_column' => $fk['foreign_column_name'],
+            'on_update' => 'CASCADE',
+            'on_delete' => 'CASCADE',
+        ];
+    }
+
+    return $result;
+}
+
+function fetchCascadeConstraints(PDO $pgsql, string $tableName): array
+{
+    $query = <<<SQL
+        SELECT
+            tc.constraint_name,
+            kcu.column_name,
+            ccu.table_name AS foreign_table_name,
+            ccu.column_name AS foreign_column_name,
+            tc.constraint_type,
+            tc.table_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+        JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_name = :tableName
+    SQL;
+
+    $stmt = $pgsql->prepare($query);
+    $stmt->execute(['tableName' => $tableName]);
+    $foreignKeys = $stmt->fetchAll();
+
+    $result = [];
+    foreach ($foreignKeys as $fk) {
+        $result[] = [
+            'name' => $fk['constraint_name'],
+            'column' => $fk['column_name'],
+            'referenced_table' => $fk['foreign_table_name'],
+            'referenced_column' => $fk['foreign_column_name'],
+        ];
+    }
+
+    return $result;
+}
+
 const COLORS = [
     'reset' => "\033[0m",
     'red' => "\033[31m",

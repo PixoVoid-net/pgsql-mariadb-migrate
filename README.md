@@ -38,12 +38,6 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ---
 
-## 🆚 Version
-
-- Version: `1.0.0`
-
----
-
 ## 🧩 Requirements
 
 - PHP >= 8.3
