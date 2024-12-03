@@ -56,7 +56,6 @@ function createPDOConnection(string $host, string $port, string $dbname, string 
 function migrateDatabase(PDO $pgsql, PDO $mariadb): void
 {
     try {
-        // Get tables in correct order
         ConsoleOutput::showStatus("Analyzing Database", "Getting table dependencies...", 0, 5);
         $orderedTables = getTableOrder($pgsql);
         $totalTables = count($orderedTables);
@@ -64,12 +63,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 1: Create all tables first (without foreign keys)
         ConsoleOutput::showStatus("Creating Tables", "Preparing to create tables...", 1, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus(
-                "Creating Tables",
-                "Creating table: $tableName",
-                1,
-                5
-            );
+            ConsoleOutput::showStatus("Creating Tables", "Creating table: $tableName", 1, 5);
             $columns = fetchTableColumns($pgsql, $tableName);
             createMariaDBTable($mariadb, $tableName, $columns);
         }
@@ -77,12 +71,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 2: Migrate data in batches
         ConsoleOutput::showStatus("Migrating Data", "Preparing to migrate data...", 2, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus(
-                "Migrating Data",
-                "Migrating data for: $tableName",
-                2,
-                5
-            );
+            ConsoleOutput::showStatus("Migrating Data", "Migrating data for: $tableName", 2, 5);
             $columns = fetchTableColumns($pgsql, $tableName);
             transferTableDataInBatches($pgsql, $mariadb, $tableName, $columns);
         }
@@ -90,12 +79,7 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 3: Add foreign keys after all data is migrated
         ConsoleOutput::showStatus("Adding Foreign Keys", "Preparing to add foreign keys...", 3, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus(
-                "Adding Foreign Keys",
-                "Adding foreign keys for: $tableName",
-                3,
-                5
-            );
+            ConsoleOutput::showStatus("Adding Foreign Keys", "Adding foreign keys for: $tableName", 3, 5);
             $foreignKeys = fetchForeignKeys($pgsql, $tableName);
             addForeignKeyConstraints($mariadb, $tableName, $foreignKeys);
         }
@@ -103,38 +87,16 @@ function migrateDatabase(PDO $pgsql, PDO $mariadb): void
         // Step 4: Add cascade constraints
         ConsoleOutput::showStatus("Adding Cascade Constraints", "Preparing to add cascade constraints...", 4, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus(
-                "Adding Cascade Constraints",
-                "Adding cascade constraints for: $tableName",
-                4,
-                5
-            );
-            $cascadeConstraints = fetchCascadeConstraints($pgsql, $tableName);
-            addCascadeConstraints($mariadb, $tableName, $cascadeConstraints);
+            ConsoleOutput::showStatus("Adding Cascade Constraints", "Adding cascade constraints for: $tableName", 4, 5);
+            $foreignKeys = fetchForeignKeys($pgsql, $tableName);
+            addCascadeConstraints($mariadb, $tableName, $foreignKeys);
         }
 
         // Step 5: Add indexes
         ConsoleOutput::showStatus("Creating Indexes", "Preparing to create indexes...", 5, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus(
-                "Creating Indexes",
-                "Creating indexes for: $tableName",
-                5,
-                5
-            );
+            ConsoleOutput::showStatus("Creating Indexes", "Creating indexes for: $tableName", 5, 5);
             createIndexes($pgsql, $mariadb, $tableName);
-        }
-
-        // Step 6: Add triggers
-        ConsoleOutput::showStatus("Creating Triggers", "Preparing to create triggers...", 6, 5);
-        foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus(
-                "Creating Triggers",
-                "Creating triggers for: $tableName",
-                6,
-                5
-            );
-            createTriggers($mariadb, $tableName);
         }
 
         ConsoleOutput::showSuccess("Migration completed successfully!");
@@ -388,110 +350,15 @@ function createIndexes(PDO $pgsql, PDO $mariadb, string $tableName): void
     }
 }
 
-function createTriggers(PDO $mariadb, string $tableName): void
-{
-    // Create audit table if it doesn't exist
-    $auditTableSql = <<<SQL
-        CREATE TABLE IF NOT EXISTS `{$tableName}_audit` (
-            `audit_id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `action` ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
-            `timestamp` DATETIME DEFAULT CURRENT_TIMESTAMP,
-            `user` VARCHAR(255),
-            `old_data` JSON,
-            `new_data` JSON
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    SQL;
-
-    try {
-        $mariadb->exec($auditTableSql);
-
-        // Create triggers for INSERT, UPDATE, and DELETE
-        $triggers = [
-            "AFTER INSERT" => <<<SQL
-                CREATE TRIGGER `{$tableName}_after_insert` 
-                AFTER INSERT ON `$tableName` FOR EACH ROW
-                BEGIN
-                    INSERT INTO `{$tableName}_audit` 
-                    (`action`, `user`, `new_data`) 
-                    VALUES (
-                        'INSERT', 
-                        CURRENT_USER(), 
-                        JSON_OBJECT(
-                            'id', NEW.id,
-                            'data', JSON_OBJECT(
-                                SELECT COLUMN_NAME 
-                                FROM INFORMATION_SCHEMA.COLUMNS 
-                                WHERE TABLE_NAME = '$tableName'
-                            )
-                        )
-                    );
-                END
-            SQL,
-            "AFTER UPDATE" => <<<SQL
-                CREATE TRIGGER `{$tableName}_after_update` 
-                AFTER UPDATE ON `$tableName` FOR EACH ROW
-                BEGIN
-                    INSERT INTO `{$tableName}_audit` 
-                    (`action`, `user`, `old_data`, `new_data`) 
-                    VALUES (
-                        'UPDATE',
-                        CURRENT_USER(),
-                        JSON_OBJECT(
-                            'id', OLD.id,
-                            'data', JSON_OBJECT(
-                                SELECT COLUMN_NAME 
-                                FROM INFORMATION_SCHEMA.COLUMNS 
-                                WHERE TABLE_NAME = '$tableName'
-                            )
-                        ),
-                        JSON_OBJECT(
-                            'id', NEW.id,
-                            'data', JSON_OBJECT(
-                                SELECT COLUMN_NAME 
-                                FROM INFORMATION_SCHEMA.COLUMNS 
-                                WHERE TABLE_NAME = '$tableName'
-                            )
-                        )
-                    );
-                END
-            SQL,
-            "AFTER DELETE" => <<<SQL
-                CREATE TRIGGER `{$tableName}_after_delete` 
-                AFTER DELETE ON `$tableName` FOR EACH ROW
-                BEGIN
-                    INSERT INTO `{$tableName}_audit` 
-                    (`action`, `user`, `old_data`) 
-                    VALUES (
-                        'DELETE',
-                        CURRENT_USER(),
-                        JSON_OBJECT(
-                            'id', OLD.id,
-                            'data', JSON_OBJECT(
-                                SELECT COLUMN_NAME 
-                                FROM INFORMATION_SCHEMA.COLUMNS 
-                                WHERE TABLE_NAME = '$tableName'
-                            )
-                        )
-                    );
-                END
-            SQL
-        ];
-
-        foreach ($triggers as $type => $triggerSql) {
-            $mariadb->exec($triggerSql);
-            logMessage("Created $type trigger for $tableName", 'INFO');
-        }
-    } catch (PDOException $e) {
-        logMessage("Failed to create trigger: " . $e->getMessage(), 'ERROR');
-    }
-}
-
 function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
     foreach ($foreignKeys as $foreignKey) {
+        // Ensure unique constraint name by appending table name
+        $constraintName = "fk_{$tableName}_{$foreignKey['name']}";
+
         $constraintSql = <<<SQL
             ALTER TABLE `$tableName`
-            ADD CONSTRAINT `{$foreignKey['name']}`
+            ADD CONSTRAINT `$constraintName`
             FOREIGN KEY (`{$foreignKey['column']}`)
             REFERENCES `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)
             ON UPDATE CASCADE
@@ -499,8 +366,15 @@ function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKe
         SQL;
 
         try {
-            $mariadb->exec($constraintSql);
-            logMessage("Added cascade constraints for $tableName", 'INFO');
+            // Check if the referenced table and column exist
+            $checkSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$foreignKey['referenced_table']}' AND COLUMN_NAME = '{$foreignKey['referenced_column']}'";
+            $result = $mariadb->query($checkSql);
+            if ($result->rowCount() > 0) {
+                $mariadb->exec($constraintSql);
+                logMessage("Added cascade constraints for $tableName", 'INFO');
+            } else {
+                logMessage("Referenced table or column does not exist for $tableName", 'ERROR');
+            }
         } catch (PDOException $e) {
             logMessage("Failed to add cascade constraints for $tableName: " . $e->getMessage(), 'ERROR');
         }
@@ -510,18 +384,14 @@ function addCascadeConstraints(PDO $mariadb, string $tableName, array $foreignKe
 function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
     foreach ($foreignKeys as $foreignKey) {
-        // Default actions if not specified
+        // Set default actions if not specified
         $onUpdate = strtoupper($foreignKey['on_update'] ?? 'NO ACTION');
         $onDelete = strtoupper($foreignKey['on_delete'] ?? 'NO ACTION');
 
         // Validate actions
         $validActions = ['NO ACTION', 'CASCADE', 'SET NULL', 'RESTRICT'];
-        if (!in_array($onUpdate, $validActions)) {
-            $onUpdate = 'NO ACTION';
-        }
-        if (!in_array($onDelete, $validActions)) {
-            $onDelete = 'NO ACTION';
-        }
+        $onUpdate = in_array($onUpdate, $validActions) ? $onUpdate : 'NO ACTION';
+        $onDelete = in_array($onDelete, $validActions) ? $onDelete : 'NO ACTION';
 
         $constraintSql = <<<SQL
             ALTER TABLE `$tableName`
@@ -533,8 +403,23 @@ function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreig
         SQL;
 
         try {
-            $mariadb->exec($constraintSql);
-            logMessage("Added foreign key constraint for $tableName: {$foreignKey['name']}", 'INFO');
+            // Check if the referenced table and column exist
+            $checkSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '{$foreignKey['referenced_table']}' AND COLUMN_NAME = '{$foreignKey['referenced_column']}'";
+            $result = $mariadb->query($checkSql);
+            if ($result->rowCount() > 0) {
+                // Ensure the referenced column has an index
+                $indexCheckSql = "SHOW INDEX FROM `{$foreignKey['referenced_table']}` WHERE Column_name = '{$foreignKey['referenced_column']}'";
+                $indexResult = $mariadb->query($indexCheckSql);
+                if ($indexResult->rowCount() === 0) {
+                    $createIndexSql = "CREATE INDEX idx_{$foreignKey['referenced_column']} ON `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)";
+                    $mariadb->exec($createIndexSql);
+                }
+
+                $mariadb->exec($constraintSql);
+                logMessage("Added foreign key constraint for $tableName: {$foreignKey['name']}", 'INFO');
+            } else {
+                logMessage("Referenced table or column does not exist for $tableName", 'ERROR');
+            }
         } catch (PDOException $e) {
             logMessage("Failed to add foreign key constraint for $tableName: {$foreignKey['name']} - " . $e->getMessage(), 'ERROR');
         }
@@ -555,6 +440,7 @@ function getTableOrder(PDO $pgsql): array
         $query = <<<SQL
             SELECT
                 tc.table_name,
+                kcu.column_name,
                 ccu.table_name AS foreign_table_name
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
