@@ -56,47 +56,48 @@ function createPDOConnection(string $host, string $port, string $dbname, string 
 function migrateDatabase(PDO $pgsql, PDO $mariadb): void
 {
     profileStart('migrateDatabase');
+    $startTime = microtime(true); // Start timer
     try {
-        ConsoleOutput::showStatus("Analyzing Database", "Getting table dependencies...", 0, 5);
+        ConsoleOutput::showStatus("Analyzing Database", "Getting table dependencies...", 0, 5, 0);
         $orderedTables = getTableOrder($pgsql);
         $totalTables = count($orderedTables);
 
         // Step 1: Create all tables first (without foreign keys)
-        ConsoleOutput::showStatus("Creating Tables", "Preparing to create tables...", 1, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus("Creating Tables", "Creating table: $tableName", 1, 5);
+            $elapsedTime = microtime(true) - $startTime;
+            ConsoleOutput::showStatus("Creating Tables", "Creating table: $tableName", 1, 5, $elapsedTime);
             $columns = fetchTableColumns($pgsql, $tableName);
             createMariaDBTable($mariadb, $tableName, $columns);
         }
 
         // Step 2: Migrate data in batches
-        ConsoleOutput::showStatus("Migrating Data", "Preparing to migrate data...", 2, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus("Migrating Data", "Migrating data for: $tableName", 2, 5);
+            $elapsedTime = microtime(true) - $startTime;
+            ConsoleOutput::showStatus("Migrating Data", "Migrating data for: $tableName", 2, 5, $elapsedTime);
             $columns = fetchTableColumns($pgsql, $tableName);
             transferTableDataInBatches($pgsql, $mariadb, $tableName, $columns);
         }
 
         // Step 3: Add foreign keys after all data is migrated
-        ConsoleOutput::showStatus("Adding Foreign Keys", "Preparing to add foreign keys...", 3, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus("Adding Foreign Keys", "Adding foreign keys for: $tableName", 3, 5);
+            $elapsedTime = microtime(true) - $startTime;
+            ConsoleOutput::showStatus("Adding Foreign Keys", "Adding foreign keys for: $tableName", 3, 5, $elapsedTime);
             $foreignKeys = fetchForeignKeys($pgsql, $tableName);
             addForeignKeyConstraints($mariadb, $pgsql, $tableName, $foreignKeys);
         }
 
         // Step 4: Add cascade constraints
-        ConsoleOutput::showStatus("Adding Cascade Constraints", "Preparing to add cascade constraints...", 4, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus("Adding Cascade Constraints", "Adding cascade constraints for: $tableName", 4, 5);
+            $elapsedTime = microtime(true) - $startTime;
+            ConsoleOutput::showStatus("Adding Cascade Constraints", "Adding cascade constraints for: $tableName", 4, 5, $elapsedTime);
             $foreignKeys = fetchForeignKeys($pgsql, $tableName);
             addCascadeConstraints($mariadb, $pgsql, $tableName, $foreignKeys);
         }
 
         // Step 5: Add indexes
-        ConsoleOutput::showStatus("Creating Indexes", "Preparing to create indexes...", 5, 5);
         foreach ($orderedTables as $index => $tableName) {
-            ConsoleOutput::showStatus("Creating Indexes", "Creating indexes for: $tableName", 5, 5);
+            $elapsedTime = microtime(true) - $startTime;
+            ConsoleOutput::showStatus("Creating Indexes", "Creating indexes for: $tableName", 5, 5, $elapsedTime);
             createIndexes($pgsql, $mariadb, $tableName);
         }
 
@@ -390,15 +391,13 @@ function addCascadeConstraints(PDO $mariadb, PDO $pgsql, string $tableName): voi
             kcu.column_name,
             ccu.table_name AS foreign_table_name,
             ccu.column_name AS foreign_column_name,
-            rc.update_rule,
-            rc.delete_rule
+            tc.constraint_type,
+            tc.table_name
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
             ON tc.constraint_name = kcu.constraint_name
         JOIN information_schema.constraint_column_usage ccu
             ON ccu.constraint_name = tc.constraint_name
-        JOIN information_schema.referential_constraints rc
-            ON rc.constraint_name = tc.constraint_name
         WHERE tc.constraint_type = 'FOREIGN KEY'
         AND tc.table_name = :tableName
     SQL;
@@ -505,20 +504,8 @@ function addCascadeConstraints(PDO $mariadb, PDO $pgsql, string $tableName): voi
 function addForeignKeyConstraints(PDO $mariadb, PDO $pgsql, string $tableName, array $foreignKeys): void
 {
     foreach ($foreignKeys as $foreignKey) {
-        // Fetch actions from PostgreSQL
-        $actions = fetchForeignKeyActions($pgsql, $tableName, $foreignKey['column']);
-        $onUpdate = strtoupper($actions['update_rule']);
-        $onDelete = strtoupper($actions['delete_rule']);
-
-        // Construct the SQL statement for adding the foreign key constraint
-        $constraintSql = "ALTER TABLE `$tableName` ADD CONSTRAINT `{$foreignKey['name']}` FOREIGN KEY (`{$foreignKey['column']}`) REFERENCES `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)";
-
-        if ($onUpdate !== 'NO ACTION') {
-            $constraintSql .= " ON UPDATE $onUpdate";
-        }
-        if ($onDelete !== 'NO ACTION') {
-            $constraintSql .= " ON DELETE $onDelete";
-        }
+        // Fetch the exact foreign key definition from PostgreSQL
+        $constraintSql = $foreignKey['definition'];
 
         try {
             // Verify the existence of the referenced table and column
@@ -544,12 +531,12 @@ function addForeignKeyConstraints(PDO $mariadb, PDO $pgsql, string $tableName, a
 
                 // Execute the SQL to add the foreign key constraint
                 $mariadb->exec($constraintSql);
-                logMessage("Added foreign key constraint for $tableName: {$foreignKey['name']}", 'INFO');
+                logMessage("Transferred foreign key constraint for $tableName: {$foreignKey['name']}", 'INFO');
             } else {
                 logMessage("Referenced table or column does not exist for $tableName", 'ERROR');
             }
         } catch (PDOException $e) {
-            logMessage("Failed to add foreign key constraint for $tableName: {$foreignKey['name']} - " . $e->getMessage(), 'ERROR');
+            logMessage("Failed to transfer foreign key constraint for $tableName: {$foreignKey['name']} - " . $e->getMessage(), 'ERROR');
         }
     }
 }
@@ -635,29 +622,64 @@ class ConsoleOutput
         'reset'  => "\033[0m",
     ];
 
-    public static function showStatus(string $step, string $message, int $current, int $total): void
+    public static function showStatus(string $step, string $message, int $current, int $total, float $elapsedTime = 0.0): void
     {
+        static $lastProgress = -1;
+        static $lastErrorCount = -1;
+
         if ($total <= 0) {
             $total = 1; // Prevent division by zero
         }
 
-        $percentage = (int)(($current / $total) * 100);
-        $progressBar = self::createProgressBar($percentage);
+        $percentage = (($current / $total) * 100);
+        $percentageDisplay = number_format($percentage, 1); // Show one decimal place
 
-        // Clear screen and move cursor to top
-        echo "\033[2J\033[;H";
-        echo "=================================================================\n";
-        echo "Current Step: " . self::COLORS['cyan'] . $step . self::COLORS['reset'] . "\n";
-        echo "Progress: $current/$total ($percentage%)\n";
-        echo $progressBar . "\n";
-        echo "Current Action: " . self::COLORS['yellow'] . $message . self::COLORS['reset'] . "\n";
-        echo "=================================================================\n";
+        // Use createProgressBar to generate the progress bar
+        $progressBar = self::createProgressBar( (int) $percentage);
+
+        // Count errors in the log file
+        $errorCount = 0;
+        if (file_exists(LOG_FILE)) {
+            $logContents = file_get_contents(LOG_FILE);
+            $errorCount = substr_count($logContents, '[ERROR]');
+        }
+
+        // Only update the console if progress or error count has changed
+        if ((int)$percentage !== $lastProgress || $errorCount !== $lastErrorCount) {
+            // Clear screen and move cursor to top
+            echo "\033[2J\033[;H";
+            echo "═══════════════════════════════════════════════════════════════════\n";
+            echo "Step: " . self::COLORS['cyan'] . $step . self::COLORS['reset'] . "\n";
+            echo "Progress: [{$progressBar}]" . self::COLORS['reset'] . " {$percentageDisplay}%\n";
+            echo "Current Action: " . self::COLORS['yellow'] . $message . self::COLORS['reset'] . "\n";
+            echo "Errors Logged: " . self::COLORS['red'] . $errorCount . self::COLORS['reset'] . "\n";
+            echo "═══════════════════════════════════════════════════════════════════\n";
+
+            $lastProgress = (int)$percentage;
+            $lastErrorCount = $errorCount;
+        }
 
         // Additional logging for detailed tracking
-        logMessage("Step: $step, Action: $message, Progress: $current/$total ($percentage%)", 'INFO');
+        logMessage(sprintf("Step: %s, Action: %s, Progress: %d/%d (%.1f%%), Errors Logged: %d", $step, $message, $current, $total, $percentageDisplay, $errorCount), 'INFO');
 
         // Optionally, add a delay for better readability in fast loops
         usleep(50000); // Sleep for 50 milliseconds
+    }
+
+    public static function createProgressBar(int $percentage): string
+    {
+        // Ensure percentage is between 0 and 100
+        $percentage = max(0, min(100, $percentage));
+
+        $width = 50;
+        $completed = (int)($width * $percentage / 100);
+        $remaining = $width - $completed;
+
+        return self::COLORS['green'] .
+            str_repeat("█", $completed) .
+            self::COLORS['white'] .
+            str_repeat("░", $remaining) .
+            self::COLORS['reset'];
     }
 
     public static function showError(string $message): void
@@ -673,22 +695,6 @@ class ConsoleOutput
     public static function showWarning(string $message): void
     {
         echo self::COLORS['yellow'] . "WARNING: $message" . self::COLORS['reset'] . "\n";
-    }
-
-    private static function createProgressBar(int $percentage): string
-    {
-        // Ensure percentage is between 0 and 100
-        $percentage = max(0, min(100, $percentage));
-
-        $width = 50;
-        $completed = (int)($width * $percentage / 100);
-        $remaining = $width - $completed;
-
-        return self::COLORS['green'] .
-            str_repeat('█', $completed) .
-            self::COLORS['white'] .
-            str_repeat('░', $remaining) .
-            self::COLORS['reset'];
     }
 }
 
@@ -761,11 +767,15 @@ function fetchForeignKeys(PDO $pgsql, string $tableName): array
 
     $result = [];
     foreach ($foreignKeys as $fk) {
+        // Construct the SQL definition for the foreign key
+        $definition = "ALTER TABLE `$tableName` ADD CONSTRAINT `{$fk['constraint_name']}` FOREIGN KEY (`{$fk['column_name']}`) REFERENCES `{$fk['foreign_table_name']}`(`{$fk['foreign_column_name']}`) ON UPDATE CASCADE ON DELETE CASCADE";
+
         $result[] = [
             'name' => $fk['constraint_name'],
             'column' => $fk['column_name'],
             'referenced_table' => $fk['foreign_table_name'],
             'referenced_column' => $fk['foreign_column_name'],
+            'definition' => $definition,
             'on_update' => 'CASCADE',
             'on_delete' => 'CASCADE',
         ];
@@ -827,13 +837,13 @@ function colorize(string $message, string $color): string
 function displayWarning(): void
 {
     echo colorize("############################ WARNING ################################\n", 'red');
-    echo colorize("This script is provided as-is, and you use it at your own risk.\n", 'yellow');
-    echo colorize("The author disclaims any liability for damages caused by its use.\n", 'yellow');
-    echo colorize("This script migrates data from PostgreSQL to MariaDB.\n", 'yellow');
-    echo colorize("PLEASE READ THE README.MD FILE BEFORE RUNNING THIS SCRIPT.\n", 'yellow');
-    echo colorize("Ensure all necessary backups are taken before proceeding.\n", 'yellow');
+    echo colorize("This script is designed to migrate data from PostgreSQL to MariaDB.\n", 'yellow');
+    echo colorize("It is provided as-is, and you assume all risks associated with its use.\n", 'yellow');
+    echo colorize("The author is not responsible for any data loss or damage.\n", 'yellow');
+    echo colorize("Before proceeding, please ensure you have read the README.md file thoroughly.\n", 'yellow');
+    echo colorize("Make sure to perform complete backups of your data to prevent any accidental loss.\n", 'yellow');
     echo colorize("######################################################################\n", 'red');
-    echo colorize("Type 'YES' to confirm you have read and understood the warning: ", 'cyan');
+    echo colorize("Type 'YES' to confirm you have read and understood this warning: ", 'cyan');
     $confirmation = trim(fgets(STDIN));
     if (strtoupper($confirmation) !== 'YES') {
         exit("Operation cancelled by user.\n");
