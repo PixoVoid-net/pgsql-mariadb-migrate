@@ -1,96 +1,153 @@
-# PostgreSQL to MariaDB Migration Script
+# PostgreSQL to MariaDB Migration Tool
 
-This PHP script helps migrate data from a PostgreSQL database to a MariaDB database. It handles the creation of tables in MariaDB based on PostgreSQL schemas and efficiently transfers data using batch processing to optimize performance.
+A robust PHP-based tool designed to automate the migration of databases from PostgreSQL to MariaDB, ensuring data integrity, preservation of relationships, and structure.
+
+---
 
 ## ⚠️ Warning
 
-**This script is currently under development. Use at your own risk.**
+This script is currently under development. Use it at your own risk.
 
-The author **assumes no liability for any damages or data loss** caused by the use of this script. Before running this migration, make sure to create proper backups of your databases.
+The author assumes no liability for any damages or data loss caused by the use of this script. Ensure that you create proper backups of your databases before running the migration.
 
-**Please read this entire README.md carefully before proceeding with the migration.**
+Please read this entire `README.md` carefully before proceeding.
 
-## 🛠️ Requirements
+---
 
-- PHP 8.3 or higher
-- PostgreSQL and MariaDB databases
-- Database credentials with sufficient access
-- A `.env` file to store configuration (see example below)
+## 🚀 Features
 
-## 📝 Features
+- Automated schema and data migration.
+- Foreign key and index preservation.
+- Progress tracking and detailed logging.
+- Batch processing for optimal performance.
 
-- Migrates PostgreSQL tables to MariaDB.
-- Automatically converts data types from PostgreSQL to MariaDB.
-- Uses batch processing to improve performance during data transfer.
-- Supports configurable table engines (e.g., InnoDB).
-- Logs progress and errors to a migration log file (`migration.log`).
+---
 
-## Data Type Mapping
+## 👨‍💻 Author
 
-The script converts PostgreSQL data types to MariaDB data types using the following mapping:
+- **PixoVoid**  
+  - Email: [contact@pixovoid.net](mailto:contact@pixovoid.net)  
+  - Website: [pixovoid.net](https://pixovoid.net)  
+  - GitHub: [PixoVoid-net/pgsql-mariadb-migrate](https://github.com/PixoVoid-net/pgsql-mariadb-migrate)
 
-| PostgreSQL Type                     | MariaDB Type       |
-|-------------------------------------|--------------------|
-| `smallint`                          | `INT`              |
-| `integer`                           | `INT`              |
-| `bigint`                            | `BIGINT`           |
-| `boolean`                           | `TINYINT(1)`       |
-| `character varying`                 | `VARCHAR(255)`     |
-| `text`                              | `TEXT`             |
-| `timestamp without time zone`       | `DATETIME`         |
-| `date`                              | `DATE`             |
-| `numeric`                           | `DECIMAL(20,6)`    |
+---
 
-## 🔧 Installation & Setup
+## 📜 License
 
-1. **Clone the repository:**
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
+---
+
+## 🆚 Version
+
+- Version: `1.0.0`
+
+---
+
+## 🧩 Requirements
+
+- PHP >= 8.3
+- Required PHP Extensions:
+  - `ext-pdo`
+  - `ext-pdo_pgsql`
+  - `ext-pdo_mysql`
+
+---
+
+## 🔧 Prerequisites
+
+- PostgreSQL 9.4+
+- MariaDB 10.3+
+
+---
+
+## 📥 Installation
+
+1. Clone the repository:
    ```bash
-   git clone https://github.com/PixoVoid-net/pgsql-mariadb-migrate
+   git clone https://github.com/PixoVoid-net/pgsql-mariadb-migrate.git
    cd pgsql-mariadb-migrate
    ```
 
-2. **Configure environment variables:**
-
-   Create a `.env` file in the root directory with the following content, adjusting for your environment:
-
-   ```plaintext
-   # PostgreSQL Configuration
-   PGSQL_HOST=your_pgsql_host
+2. Create a `.env` file in the project root directory and configure it with your database credentials:
+   ```env
+   PGSQL_HOST=localhost
    PGSQL_PORT=5432
-   PGSQL_DBNAME=your_pgsql_dbname
-   PGSQL_USER=your_pgsql_user
-   PGSQL_PASSWORD=your_pgsql_password
+   PGSQL_DBNAME=your_database
+   PGSQL_USER=your_username
+   PGSQL_PASSWORD=your_password
 
-   # MariaDB Configuration
-   MARIADB_HOST=your_mariadb_host
+   MARIADB_HOST=localhost
    MARIADB_PORT=3306
-   MARIADB_DBNAME=your_mariadb_dbname
-   MARIADB_USER=your_mariadb_user
-   MARIADB_PASSWORD=your_mariadb_password
-
-   # Optional: Table Engine (e.g., InnoDB, MyISAM)
-   TABLE_ENGINE=InnoDB
+   MARIADB_DBNAME=your_database
+   MARIADB_USER=your_username
+   MARIADB_PASSWORD=your_password
    ```
 
-3. **Run the migration script:**
+---
 
-   Execute the following command to start the migration process:
+## ⚙️ Configuration
 
+### Database Settings
+
+The tool uses environment variables to manage database connections. All configurations are stored in the `.env` file.
+
+### Migration Constants
+
+Key configuration constants in the `DatabaseConfig` class:
+- `BATCH_SIZE`: The number of records to process per batch (default: 100).
+- `DEFAULT_ENGINE`: Default storage engine for tables (default: InnoDB).
+- `CHARSET`: Default character set (default: utf8mb4).
+- `COLLATION`: Default collation (default: utf8mb4_unicode_ci).
+
+---
+
+## 🏁 Usage
+
+1. Ensure your `.env` file is configured correctly.
+2. Run the migration script:
    ```bash
    php migration.php
    ```
 
-   The script will display a warning message about usage at your own risk, and you will need to confirm by pressing Enter to proceed.
+The tool will:
+1. Verify the required PHP extensions.
+2. Connect to both PostgreSQL and MariaDB databases.
+3. Create tables in the correct dependency order.
+4. Migrate data with proper type conversion.
+5. Establish foreign key constraints.
+6. Add indexes.
+7. Set up audit triggers.
 
-## 🏗️ How it Works
+---
 
-- **Step 1:** The script connects to both PostgreSQL and MariaDB using the credentials provided in the `.env` file.
-- **Step 2:** It checks for all available tables in the PostgreSQL database.
-- **Step 3:** For each table, it creates an equivalent table in MariaDB with the appropriate data types.
-- **Step 4:** The script transfers the data from PostgreSQL to MariaDB in batches for efficiency.
-- **Step 5:** Logs are generated for each operation, including success and failure messages.
+## 📊 Data Type Mappings
 
-## 📜 License
+| PostgreSQL Type        | MariaDB Type        | Notes                               |
+|------------------------|---------------------|-------------------------------------|
+| `smallint`             | `INT`               |                                     |
+| `integer`              | `INT`               |                                     |
+| `bigint`               | `BIGINT`            |                                     |
+| `boolean`              | `TINYINT(1)`        | `0` = false, `1` = true             |
+| `character varying`    | `VARCHAR(255)`      |                                     |
+| `text`                 | `TEXT`              |                                     |
+| `timestamp`            | `DATETIME`          |                                     |
+| `date`                 | `DATE`              |                                     |
+| `numeric`              | `DECIMAL(20,6)`     |                                     |
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+---
+
+## 🔍 Logging and Monitoring
+
+- Migration progress is displayed in real-time with a visual progress bar.
+- All operations are logged to `migration.log`.
+- Console output uses color coding for different message types:
+  - 🟢 **Success** messages
+  - 🔴 **Error** messages
+  - 🟡 **Warning** messages
+
+---
+
+## 📝 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
