@@ -30,7 +30,7 @@ declare(strict_types=1);
 // Improved error handling and logging for better user feedback
 ini_set('display_errors', '0'); // Disable display errors on screen
 ini_set('log_errors', '1'); // Enable error logging
-ini_set('error_log', __DIR__ . '/migration.log'); // Log errors to the migration log file
+ini_set('error_log', __DIR__ . '/migration_error.log'); // Log errors to the migration log file
 
 // Enhanced script execution time management
 set_time_limit(0); // Limit execution time to unlimited to prevent server overload
@@ -281,6 +281,18 @@ function sanitizeRow(array &$row, array $columns): void
     }
 }
 
+// Utility function for validating and setting default actions
+function validateAction(string $action, string $constraintName, string $tableName, string $type): string
+{
+    $validActions = ['NO ACTION', 'CASCADE', 'SET NULL', 'RESTRICT', 'SET DEFAULT'];
+    $action = strtoupper($action);
+    if (!in_array($action, $validActions)) {
+        logMessage("Invalid $type action '$action' for $constraintName in $tableName. Defaulting to 'NO ACTION'.", 'WARNING');
+        return 'NO ACTION';
+    }
+    return $action;
+}
+
 function createForeignKeyConstraints(PDO $pgsql, PDO $mariadb, string $tableName): void
 {
     $query = <<<SQL
@@ -469,25 +481,12 @@ function addCascadeConstraints(PDO $mariadb, PDO $pgsql, string $tableName, arra
 
 function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreignKeys): void
 {
-    // Define all possible actions for ON DELETE and ON UPDATE
-    $validActions = ['NO ACTION', 'CASCADE', 'SET NULL', 'RESTRICT', 'SET DEFAULT'];
-
     foreach ($foreignKeys as $foreignKey) {
-        // Set default actions if not specified
-        $onUpdate = strtoupper($foreignKey['on_update'] ?? 'NO ACTION');
-        $onDelete = strtoupper($foreignKey['on_delete'] ?? 'NO ACTION');
+        // Validate and set default actions for ON UPDATE and ON DELETE
+        $onUpdate = validateAction($foreignKey['on_update'] ?? 'NO ACTION', $foreignKey['name'], $tableName, 'ON UPDATE');
+        $onDelete = validateAction($foreignKey['on_delete'] ?? 'NO ACTION', $foreignKey['name'], $tableName, 'ON DELETE');
 
-        // Validate actions
-        if (!in_array($onUpdate, $validActions)) {
-            logMessage("Invalid ON UPDATE action '{$onUpdate}' for {$foreignKey['name']} in $tableName. Defaulting to 'NO ACTION'.", 'WARNING');
-            $onUpdate = 'NO ACTION';
-        }
-        if (!in_array($onDelete, $validActions)) {
-            logMessage("Invalid ON DELETE action '{$onDelete}' for {$foreignKey['name']} in $tableName. Defaulting to 'NO ACTION'.", 'WARNING');
-            $onDelete = 'NO ACTION';
-        }
-
-        // Build the SQL for adding the foreign key constraint
+        // Construct the SQL statement for adding the foreign key constraint
         $constraintSql = "ALTER TABLE `$tableName` ADD CONSTRAINT `{$foreignKey['name']}` FOREIGN KEY (`{$foreignKey['column']}`) REFERENCES `{$foreignKey['referenced_table']}`(`{$foreignKey['referenced_column']}`)";
 
         if ($onUpdate !== 'NO ACTION') {
@@ -498,7 +497,7 @@ function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreig
         }
 
         try {
-            // Check if the referenced table and column exist
+            // Verify the existence of the referenced table and column
             $checkSql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :referenced_table AND COLUMN_NAME = :referenced_column";
             $stmt = $mariadb->prepare($checkSql);
             $stmt->execute([
@@ -519,7 +518,7 @@ function addForeignKeyConstraints(PDO $mariadb, string $tableName, array $foreig
                     $mariadb->exec($createIndexSql);
                 }
 
-                // Add the foreign key constraint
+                // Execute the SQL to add the foreign key constraint
                 $mariadb->exec($constraintSql);
                 logMessage("Added foreign key constraint for $tableName: {$foreignKey['name']}", 'INFO');
             } else {
