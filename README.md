@@ -6,7 +6,7 @@ A robust PHP-based tool designed to automate the migration of databases from Pos
 
 ## ⚠️ Warning
 
-This script is currently under development. Use it at your own risk.
+**This script is currently under development. Use it at your own risk.**
 
 The author assumes no liability for any damages or data loss caused by the use of this script. Ensure that you create proper backups of your databases before running the migration.
 
