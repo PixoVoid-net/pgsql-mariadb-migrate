@@ -494,19 +494,6 @@ function getTableOrder(PDO $pgsql): array
     return $orderedTables;
 }
 
-function dropAuditTables(PDO $mariadb, array $tableNames): void
-{
-    foreach ($tableNames as $tableName) {
-        $auditTableName = "{$tableName}_audit";
-        try {
-            $mariadb->exec("DROP TABLE IF EXISTS `$auditTableName`;");
-            logMessage("Dropped audit table: $auditTableName", 'INFO');
-        } catch (PDOException $e) {
-            logMessage("Failed to drop audit table $auditTableName: " . $e->getMessage(), 'ERROR');
-        }
-    }
-}
-
 class ConsoleOutput
 {
     public const COLORS = [
@@ -733,7 +720,6 @@ function main()
 
         // Drop audit tables
         $tableNames = getTableOrder($pgsql);
-        dropAuditTables($mariadb, $tableNames);
 
         logMessage("Migration completed successfully.", 'SUCCESS');
         echo colorize("Migration completed successfully. Check the log for details.\n", 'green');
